@@ -1,13 +1,12 @@
 /* Copyright 2012 William Woodall and John Harrison */
 #include <algorithm>
 
-#if !defined(_WIN32) && !defined(__OpenBSD__) && !defined(__FreeBSD__)
+#if defined (__MINGW32__)
+//# define alloca __builtin_alloca
+#elif !defined(_WIN32) && !defined(__OpenBSD__) && !defined(__FreeBSD__)
 # include <alloca.h>
 #endif
 
-#if defined (__MINGW32__)
-# define alloca __builtin_alloca
-#endif
 
 #include "serial/serial.h"
 
