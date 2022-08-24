@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8.3)
+cmake_minimum_required(VERSION 3.0.0)
 project(serial)
 set(CATKIN_ENABLE_TESTING, No)
 # Find catkin
@@ -24,10 +24,12 @@ if(CATKIN_ENABLE_TESTING)
 endif()
 else()
     # Otherwise normal call
+	if(CATKIN_ENABLE_TESTING)
     catkin_package(
         LIBRARIES ${PROJECT_NAME}
         INCLUDE_DIRS include
     )
+	endif()
 endif()
 
 ## Sources
@@ -52,6 +54,7 @@ endif()
 
 ## Add serial library
 add_library(${PROJECT_NAME} ${serial_SRCS})
+add_library("Serial::${PROJECT_NAME}" ALIAS ${PROJECT_NAME})
 if(APPLE)
     target_link_libraries(${PROJECT_NAME} ${FOUNDATION_LIBRARY} ${IOKIT_LIBRARY})
 elseif(UNIX)
@@ -60,24 +63,34 @@ else()
     target_link_libraries(${PROJECT_NAME} setupapi)
 endif()
 
+target_include_directories(${PROJECT_NAME}
+	PUBLIC
+	${CMAKE_CURRENT_LIST_DIR}/include
+)
+
+#target_include_directories(${PROJECT_NAME}
+#	PUBLIC
+#	${CMAKE_CURRENT_LIST_DIR}/include
+#)
+
 ## Uncomment for example
-add_executable(serial_example examples/serial_example.cc)
-add_dependencies(serial_example ${PROJECT_NAME})
-target_link_libraries(serial_example ${PROJECT_NAME})
+#add_executable(serial_example examples/serial_example.cc)
+#add_dependencies(serial_example ${PROJECT_NAME})
+#target_link_libraries(serial_example ${PROJECT_NAME})
 
 ## Include headers
 include_directories(include)
 
 ## Install executable
-install(TARGETS ${PROJECT_NAME}
-    ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-    LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-    RUNTIME DESTINATION ${CATKIN_GLOBAL_BIN_DESTINATION}
-)
+#install(TARGETS ${PROJECT_NAME}
+#    ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+#    LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+#    RUNTIME DESTINATION ${CATKIN_GLOBAL_BIN_DESTINATION}
+#)
 
 ## Install headers
-install(FILES include/serial/serial.h include/serial/v8stdint.h
-  DESTINATION ${CATKIN_GLOBAL_INCLUDE_DESTINATION}/serial)
+#install(FILES include/serial/serial.h include/serial/v8stdint.h
+#  DESTINATION ${CATKIN_GLOBAL_INCLUDE_DESTINATION}/serial)
 
 ## Tests
 if(CATKIN_ENABLE_TESTING)
