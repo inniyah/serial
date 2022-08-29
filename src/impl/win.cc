@@ -611,6 +611,15 @@ Serial::SerialImpl::getCD()
 }
 
 void
+Serial::SerialImpl::discard()
+{
+    DWORD flags = PURGE_TXCLEAR | PURGE_RXCLEAR;
+    if (!PurgeComm(fd_, flags)) {
+        THROW(IOException, "Error discarding communication buffers.");
+    }
+}
+
+void
 Serial::SerialImpl::readLock()
 {
   if (WaitForSingleObject(read_mutex, INFINITE) != WAIT_OBJECT_0) {

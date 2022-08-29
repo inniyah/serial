@@ -430,3 +430,8 @@ bool Serial::getCD ()
 {
   return pimpl_->getCD ();
 }
+
+void Serial::discard()
+{
+    pimpl_->discard();
+}

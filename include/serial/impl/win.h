@@ -166,6 +166,9 @@ public:
   getFlowcontrol () const;
 
   void
+  discard();
+
+  void
   readLock ();
 
   void

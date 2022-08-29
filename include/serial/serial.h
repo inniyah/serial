@@ -647,6 +647,9 @@ public:
   bool
   getCD ();
 
+  void
+  discard();
+
 private:
   // Disable copy constructors
   Serial(const Serial&);
