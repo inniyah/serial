@@ -55,6 +55,7 @@ endif()
 ## Add serial library
 add_library(${PROJECT_NAME} ${serial_SRCS})
 add_library("Serial::${PROJECT_NAME}" ALIAS ${PROJECT_NAME})
+set_target_properties(${PROJECT_NAME} PROPERTIES COMPILE_FLAGS "-m32" LINK_FLAGS "-m32")
 if(APPLE)
     target_link_libraries(${PROJECT_NAME} ${FOUNDATION_LIBRARY} ${IOKIT_LIBRARY})
 elseif(UNIX)
