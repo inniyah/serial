@@ -21,7 +21,7 @@
 
 #if defined(__linux__)
 # include <linux/serial.h>
-#include <asm/termios.h>
+#include <asm/termbits.h>
 #endif
 
 #include <sys/select.h>
@@ -190,7 +190,7 @@ Serial::SerialImpl::reconfigurePort ()
   options.c_cflag |= BOTHER;
   options.c_ispeed = baudrate_;
   options.c_ospeed = baudrate_;
-  int r = ioctl(fd_, TCSETS2, &options);
+  //int r = ioctl(fd_, TCSETS2, &options);
 
   // setup char len
   options.c_cflag &= (tcflag_t) ~CSIZE;
@@ -280,7 +280,7 @@ Serial::SerialImpl::reconfigurePort ()
 #else
 #error "OS Support seems wrong."
 #endif
-
+ioctl(fd_, TCSETS2, &options);
   // Update byte_time_ based on the new settings.
   uint32_t bit_time_ns = 1e9 / baudrate_;
   byte_time_ns_ = bit_time_ns * (1 + bytesize_ + parity_ + stopbits_);
@@ -645,7 +645,9 @@ Serial::SerialImpl::flush ()
   if (is_open_ == false) {
     throw PortNotOpenedException ("Serial::flush");
   }
-  tcdrain (fd_);
+  //tcdrain (fd_);
+  usleep(2000);
+  ioctl(fd_, TCSBRK, 1);
 }
 
 void
@@ -654,7 +656,9 @@ Serial::SerialImpl::flushInput ()
   if (is_open_ == false) {
     throw PortNotOpenedException ("Serial::flushInput");
   }
-  tcflush (fd_, TCIFLUSH);
+  //tcflush (fd_, TCIFLUSH);
+  usleep(2000);
+  ioctl(fd_, TCFLSH, 0);
 }
 
 void
@@ -663,7 +667,9 @@ Serial::SerialImpl::flushOutput ()
   if (is_open_ == false) {
     throw PortNotOpenedException ("Serial::flushOutput");
   }
-  tcflush (fd_, TCOFLUSH);
+  //tcflush (fd_, TCOFLUSH);
+  usleep(2000);
+  ioctl(fd_, TCFLSH, 1);
 }
 
 void
@@ -672,7 +678,8 @@ Serial::SerialImpl::sendBreak (int duration)
   if (is_open_ == false) {
     throw PortNotOpenedException ("Serial::sendBreak");
   }
-  tcsendbreak (fd_, static_cast<int> (duration / 4));
+  //tcsendbreak (fd_, static_cast<int> (duration / 4));
+  ioctl(fd_, TCSBRKP, static_cast<int> (duration / 4));
 }
 
 void
@@ -881,6 +888,8 @@ Serial::SerialImpl::getCD ()
 void
 Serial::SerialImpl::discard()
 {
+    usleep(2000);
+    ioctl(fd_, TCFLSH, 2);
 }
 
 void
