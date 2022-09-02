@@ -438,7 +438,7 @@ Serial::SerialImpl::reconfigurePort ()
     ser.custom_divisor = ser.baud_base / static_cast<int> (baudrate_);
     // update flags
     ser.flags &= ~ASYNC_SPD_MASK;
-    ser.flags |= ASYNC_SPD_CUST;
+    ser.flags |= ASYNC_SPD_CUST | ASYNC_LOW_LATENCY;
 
     if (-1 == ioctl (fd_, TIOCSSERIAL, &ser)) {
       THROW (IOException, errno);
