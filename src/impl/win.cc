@@ -43,6 +43,8 @@ Serial::SerialImpl::SerialImpl (const string &port, unsigned long baudrate,
     open ();
   read_mutex = CreateMutex(NULL, false, NULL);
   write_mutex = CreateMutex(NULL, false, NULL);
+  ov_read.hEvent = CreateEvent(NULL, 1, 0, NULL);
+  ov_write.hEvent = CreateEvent(NULL, 0, 0, NULL);
 }
 
 Serial::SerialImpl::~SerialImpl ()
@@ -50,6 +52,8 @@ Serial::SerialImpl::~SerialImpl ()
   this->close();
   CloseHandle(read_mutex);
   CloseHandle(write_mutex);
+  CloseHandle(ov_read.hEvent);
+  CloseHandle(ov_write.hEvent);
 }
 
 void
@@ -70,7 +74,7 @@ Serial::SerialImpl::open ()
                     0,
                     0,
                     OPEN_EXISTING,
-                    FILE_ATTRIBUTE_NORMAL,
+                    FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
                     0);
 
   if (fd_ == INVALID_HANDLE_VALUE) {
@@ -277,7 +281,23 @@ Serial::SerialImpl::reconfigurePort ()
 void
 Serial::SerialImpl::close ()
 {
-  if (is_open_ == true) {
+  if (is_open_) {
+    // Cancel a blocking operation.
+    DWORD rc;
+    WINBOOL err;
+    err = GetOverlappedResult(fd_, &ov_read, &rc, FALSE);
+    if (!err) {
+      rc = GetLastError();
+      if (rc == ERROR_IO_PENDING || rc == ERROR_IO_INCOMPLETE)
+        CancelIoEx(fd_, &ov_read);
+    }
+    err = GetOverlappedResult(fd_, &ov_write, &rc, FALSE);
+    if (!err) {
+      rc = GetLastError();
+      if (rc == ERROR_IO_PENDING || rc == ERROR_IO_INCOMPLETE)
+        CancelIoEx(fd_, &ov_write);
+    }
+
     if (fd_ != INVALID_HANDLE_VALUE) {
       int ret;
       ret = CloseHandle(fd_);
@@ -315,16 +335,54 @@ Serial::SerialImpl::available ()
 }
 
 bool
-Serial::SerialImpl::waitReadable (uint32_t /*timeout*/)
+Serial::SerialImpl::waitReadable (uint32_t timeout)
 {
-  THROW (IOException, "waitReadable is not implemented on Windows.");
+  COMSTAT cs;
+  DWORD error;
+  DWORD old_msk, msk, length;
+  if (!isOpen()) {
+    return false;
+  }
+  if (!GetCommMask(fd_, &old_msk)) {
+    stringstream ss;
+    ss << "Error while get mask of the serial port: " << GetLastError();
+    THROW(IOException, ss.str().c_str());
+  }
+  msk = 0;
+  SetCommMask(fd_, EV_RXCHAR | EV_ERR);
+  if (!WaitCommEvent(fd_, &msk, &ov_read)) {
+    if (GetLastError() == ERROR_IO_PENDING) {
+      if (WaitForSingleObject(ov_read.hEvent, (DWORD)timeout) == WAIT_TIMEOUT) {
+        SetCommMask(fd_, old_msk);
+        return false;
+      }
+      GetOverlappedResult(fd_, &ov_read, &length, TRUE);
+      ResetEvent(ov_read.hEvent);
+    } else {
+      ClearCommError(fd_, &error, &cs);
+      SetCommMask(fd_, old_msk);
+      return cs.cbInQue > 0;
+    }
+  }
+  SetCommMask(fd_, old_msk);
+  if (msk & EV_ERR) {
+    ClearCommError(fd_, &error, &cs);
+    return cs.cbInQue > 0;
+  }
+  if (msk & EV_RXCHAR) {
+    return true;
+  }
   return false;
 }
 
 void
-Serial::SerialImpl::waitByteTimes (size_t /*count*/)
+Serial::SerialImpl::waitByteTimes (size_t count)
 {
-  THROW (IOException, "waitByteTimes is not implemented on Windows.");
+  DWORD wait_time = timeout_.inter_byte_timeout * count;
+  HANDLE wait_event = CreateEvent(NULL, FALSE, FALSE, NULL);
+  ResetEvent(wait_event);
+  WaitForSingleObject(wait_event, wait_time);
+  CloseHandle(wait_event);
 }
 
 size_t
@@ -333,13 +391,31 @@ Serial::SerialImpl::read (uint8_t *buf, size_t size)
   if (!is_open_) {
     throw PortNotOpenedException ("Serial::read");
   }
-  DWORD bytes_read;
-  if (!ReadFile(fd_, buf, static_cast<DWORD>(size), &bytes_read, NULL)) {
-    stringstream ss;
-    ss << "Error while reading from the serial port: " << GetLastError();
-    THROW (IOException, ss.str().c_str());
+  if (size > 0) {
+    ResetEvent(ov_read.hEvent);
+    DWORD bytes_read;
+    WINBOOL read_ok = ReadFile(fd_, buf, static_cast<DWORD>(size), &bytes_read, &ov_read);
+    if (!read_ok) {
+      DWORD error = GetLastError();
+      if ((error != ERROR_SUCCESS) && (error != ERROR_IO_PENDING)) {
+        stringstream ss;
+        ss << "Error while reading from the serial port: " << error;
+        THROW (IOException, ss.str().c_str());
+      }
+    }
+    WINBOOL result_ok = GetOverlappedResult(fd_, &ov_read, &bytes_read, TRUE);
+    if (!result_ok) {
+      DWORD error = GetLastError();
+      if (error != ERROR_OPERATION_ABORTED) {
+        stringstream ss;
+        ss << "GetOverlappedResult failed: " << error;
+        THROW (IOException, ss.str().c_str());
+      }
+    }
+    return (size_t) (bytes_read);
+  } else {
+    return 0;
   }
-  return (size_t) (bytes_read);
 }
 
 size_t
@@ -349,12 +425,38 @@ Serial::SerialImpl::write (const uint8_t *data, size_t length)
     throw PortNotOpenedException ("Serial::write");
   }
   DWORD bytes_written;
-  if (!WriteFile(fd_, data, static_cast<DWORD>(length), &bytes_written, NULL)) {
-    stringstream ss;
-    ss << "Error while writing to the serial port: " << GetLastError();
-    THROW (IOException, ss.str().c_str());
+  int success = WriteFile(fd_, data, static_cast<DWORD>(length), &bytes_written, &ov_write);
+  DWORD error = success ? ERROR_SUCCESS : GetLastError();
+  if (timeout_.write_timeout_constant != 0) {
+    if ((error != ERROR_SUCCESS) && (error != ERROR_IO_PENDING)) {
+      stringstream ss;
+      ss << "WriteFile failed: " << error;
+      THROW (IOException, ss.str().c_str());
+    }
+    GetOverlappedResult(fd_, &ov_write, &bytes_written, TRUE);
+    error = GetLastError();
+    if (error == ERROR_OPERATION_ABORTED) {
+      return bytes_written;
+    }
+    if (bytes_written != length) {
+      stringstream ss;
+      ss << "Write timeout.";
+      THROW (IOException, ss.str().c_str());
+    }
+    return bytes_written;
+  } else {
+    if ((error == ERROR_INVALID_USER_BUFFER) ||
+        (error == ERROR_NOT_ENOUGH_MEMORY) ||
+        (error == ERROR_OPERATION_ABORTED)) {
+      return 0;
+    } else if ((error == ERROR_SUCCESS) || (error == ERROR_IO_PENDING)) {
+      return (size_t) (bytes_written);
+    } else {
+      stringstream ss;
+      ss << "WriteFile failed: " << error;
+      THROW (IOException, ss.str().c_str());
+    }
   }
-  return (size_t) (bytes_written);
 }
 
 void
