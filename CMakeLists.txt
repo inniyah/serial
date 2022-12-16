@@ -24,12 +24,12 @@ if(CATKIN_ENABLE_TESTING)
 endif()
 else()
     # Otherwise normal call
-	if(CATKIN_ENABLE_TESTING)
+    if(CATKIN_ENABLE_TESTING)
     catkin_package(
         LIBRARIES ${PROJECT_NAME}
         INCLUDE_DIRS include
     )
-	endif()
+    endif()
 endif()
 
 ## Sources
@@ -44,6 +44,7 @@ if(APPLE)
     list(APPEND serial_SRCS src/impl/list_ports/list_ports_osx.cc)
 elseif(UNIX)
     # If unix
+    add_compile_definitions(WITH_TERMIOS2)
     list(APPEND serial_SRCS src/impl/unix.cc)
     list(APPEND serial_SRCS src/impl/list_ports/list_ports_linux.cc)
 else()
@@ -55,7 +56,6 @@ endif()
 ## Add serial library
 add_library(${PROJECT_NAME} ${serial_SRCS})
 add_library("Serial::${PROJECT_NAME}" ALIAS ${PROJECT_NAME})
-set_target_properties(${PROJECT_NAME} PROPERTIES COMPILE_FLAGS "-m32" LINK_FLAGS "-m32")
 if(APPLE)
     target_link_libraries(${PROJECT_NAME} ${FOUNDATION_LIBRARY} ${IOKIT_LIBRARY})
 elseif(UNIX)
@@ -65,19 +65,19 @@ else()
 endif()
 
 target_include_directories(${PROJECT_NAME}
-	PUBLIC
-	${CMAKE_CURRENT_LIST_DIR}/include
+    PUBLIC
+    ${CMAKE_CURRENT_LIST_DIR}/include
 )
 
 #target_include_directories(${PROJECT_NAME}
-#	PUBLIC
-#	${CMAKE_CURRENT_LIST_DIR}/include
+#    PUBLIC
+#    ${CMAKE_CURRENT_LIST_DIR}/include
 #)
 
-## Uncomment for example
-#add_executable(serial_example examples/serial_example.cc)
-#add_dependencies(serial_example ${PROJECT_NAME})
-#target_link_libraries(serial_example ${PROJECT_NAME})
+## Build example
+add_executable(serial_example examples/serial_example.cc)
+add_dependencies(serial_example ${PROJECT_NAME})
+target_link_libraries(serial_example ${PROJECT_NAME})
 
 ## Include headers
 include_directories(include)

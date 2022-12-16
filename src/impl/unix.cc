@@ -15,13 +15,18 @@
 #include <errno.h>
 #include <paths.h>
 #include <sysexits.h>
-//#include <termios.h>
 #include <sys/param.h>
 #include <pthread.h>
 
+#ifndef WITH_TERMIOS2
+#include <termios.h>
+#endif
+
 #if defined(__linux__)
 # include <linux/serial.h>
-#include <asm/termbits.h>
+# ifdef WITH_TERMIOS2
+#  include <asm/termbits.h>
+# endif
 #endif
 
 #include <sys/select.h>
@@ -165,11 +170,19 @@ Serial::SerialImpl::reconfigurePort ()
     THROW (IOException, "Invalid file descriptor, is the serial port open?");
   }
 
+#ifdef WITH_TERMIOS2
   struct termios2 options; // The options for the file descriptor
 
   if (ioctl(fd_, TCGETS2, &options) == -1) {
     THROW (IOException, "TCGETS");
   }
+#else
+  struct termios options; // The options for the file descriptor
+
+  if (tcgetattr(fd_, &options) == -1) {
+    THROW (IOException, "::tcgetattr");
+  }
+#endif
 
   // set up raw mode / no echo / binary
   options.c_cflag |= (tcflag_t)  (CLOCAL | CREAD);
@@ -186,11 +199,144 @@ Serial::SerialImpl::reconfigurePort ()
 #endif
 
   // setup baud rate
+#ifdef WITH_TERMIOS2
   options.c_cflag &= ~CBAUD;
   options.c_cflag |= BOTHER;
   options.c_ispeed = baudrate_;
   options.c_ospeed = baudrate_;
   //int r = ioctl(fd_, TCSETS2, &options);
+
+#else
+  bool custom_baud = false;
+  speed_t baud;
+  switch (baudrate_) {
+#ifdef B0
+  case 0: baud = B0; break;
+#endif
+#ifdef B50
+  case 50: baud = B50; break;
+#endif
+#ifdef B75
+  case 75: baud = B75; break;
+#endif
+#ifdef B110
+  case 110: baud = B110; break;
+#endif
+#ifdef B134
+  case 134: baud = B134; break;
+#endif
+#ifdef B150
+  case 150: baud = B150; break;
+#endif
+#ifdef B200
+  case 200: baud = B200; break;
+#endif
+#ifdef B300
+  case 300: baud = B300; break;
+#endif
+#ifdef B600
+  case 600: baud = B600; break;
+#endif
+#ifdef B1200
+  case 1200: baud = B1200; break;
+#endif
+#ifdef B1800
+  case 1800: baud = B1800; break;
+#endif
+#ifdef B2400
+  case 2400: baud = B2400; break;
+#endif
+#ifdef B4800
+  case 4800: baud = B4800; break;
+#endif
+#ifdef B7200
+  case 7200: baud = B7200; break;
+#endif
+#ifdef B9600
+  case 9600: baud = B9600; break;
+#endif
+#ifdef B14400
+  case 14400: baud = B14400; break;
+#endif
+#ifdef B19200
+  case 19200: baud = B19200; break;
+#endif
+#ifdef B28800
+  case 28800: baud = B28800; break;
+#endif
+#ifdef B57600
+  case 57600: baud = B57600; break;
+#endif
+#ifdef B76800
+  case 76800: baud = B76800; break;
+#endif
+#ifdef B38400
+  case 38400: baud = B38400; break;
+#endif
+#ifdef B115200
+  case 115200: baud = B115200; break;
+#endif
+#ifdef B128000
+  case 128000: baud = B128000; break;
+#endif
+#ifdef B153600
+  case 153600: baud = B153600; break;
+#endif
+#ifdef B230400
+  case 230400: baud = B230400; break;
+#endif
+#ifdef B256000
+  case 256000: baud = B256000; break;
+#endif
+#ifdef B460800
+  case 460800: baud = B460800; break;
+#endif
+#ifdef B500000
+  case 500000: baud = B500000; break;
+#endif
+#ifdef B576000
+  case 576000: baud = B576000; break;
+#endif
+#ifdef B921600
+  case 921600: baud = B921600; break;
+#endif
+#ifdef B1000000
+  case 1000000: baud = B1000000; break;
+#endif
+#ifdef B1152000
+  case 1152000: baud = B1152000; break;
+#endif
+#ifdef B1500000
+  case 1500000: baud = B1500000; break;
+#endif
+#ifdef B2000000
+  case 2000000: baud = B2000000; break;
+#endif
+#ifdef B2500000
+  case 2500000: baud = B2500000; break;
+#endif
+#ifdef B3000000
+  case 3000000: baud = B3000000; break;
+#endif
+#ifdef B3500000
+  case 3500000: baud = B3500000; break;
+#endif
+#ifdef B4000000
+  case 4000000: baud = B4000000; break;
+#endif
+  default:
+    custom_baud = true;
+  }
+  if (custom_baud == false) {
+#ifdef _BSD_SOURCE
+    ::cfsetspeed(&options, baud);
+#else
+    ::cfsetispeed(&options, baud);
+    ::cfsetospeed(&options, baud);
+#endif
+  }
+
+#endif
 
   // setup char len
   options.c_cflag &= (tcflag_t) ~CSIZE;
@@ -280,7 +426,58 @@ Serial::SerialImpl::reconfigurePort ()
 #else
 #error "OS Support seems wrong."
 #endif
-ioctl(fd_, TCSETS2, &options);
+
+#ifdef WITH_TERMIOS2
+  ioctl(fd_, TCSETS2, &options);
+
+#else
+  // http://www.unixwiz.net/techtips/termios-vmin-vtime.html
+  // this basically sets the read call up to be a polling read,
+  // but we are using select to ensure there is data available
+  // to read before each call, so we should never needlessly poll
+  options.c_cc[VMIN] = 0;
+  options.c_cc[VTIME] = 0;
+
+  // activate settings
+  ::tcsetattr (fd_, TCSANOW, &options);
+
+  // apply custom baud rate, if any
+  if (custom_baud == true) {
+    // OS X support
+#if defined(MAC_OS_X_VERSION_10_4) && (MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_4)
+    // Starting with Tiger, the IOSSIOSPEED ioctl can be used to set arbitrary baud rates
+    // other than those specified by POSIX. The driver for the underlying serial hardware
+    // ultimately determines which baud rates can be used. This ioctl sets both the input
+    // and output speed.
+    speed_t new_baud = static_cast<speed_t> (baudrate_);
+    // PySerial uses IOSSIOSPEED=0x80045402
+    if (-1 == ioctl (fd_, IOSSIOSPEED, &new_baud, 1)) {
+      THROW (IOException, errno);
+    }
+    // Linux Support
+#elif defined(__linux__) && defined (TIOCSSERIAL)
+    struct serial_struct ser;
+
+    if (-1 == ioctl (fd_, TIOCGSERIAL, &ser)) {
+      THROW (IOException, errno);
+    }
+
+    // set custom divisor
+    ser.custom_divisor = ser.baud_base / static_cast<int> (baudrate_);
+    // update flags
+    ser.flags &= ~ASYNC_SPD_MASK;
+    ser.flags |= ASYNC_SPD_CUST | ASYNC_LOW_LATENCY;
+
+    if (-1 == ioctl (fd_, TIOCSSERIAL, &ser)) {
+      THROW (IOException, errno);
+    }
+#else
+    throw invalid_argument ("OS does not currently support custom bauds");
+#endif
+  }
+
+#endif
+
   // Update byte_time_ based on the new settings.
   uint32_t bit_time_ns = 1e9 / baudrate_;
   byte_time_ns_ = bit_time_ns * (1 + bytesize_ + parity_ + stopbits_);
@@ -657,9 +854,12 @@ Serial::SerialImpl::flush ()
   if (is_open_ == false) {
     throw PortNotOpenedException ("Serial::flush");
   }
-  //tcdrain (fd_);
+#ifdef WITH_TERMIOS2
   usleep(2000);
   ioctl(fd_, TCSBRK, 1);
+#else
+  tcdrain (fd_);
+#endif
 }
 
 void
@@ -668,9 +868,12 @@ Serial::SerialImpl::flushInput ()
   if (is_open_ == false) {
     throw PortNotOpenedException ("Serial::flushInput");
   }
-  //tcflush (fd_, TCIFLUSH);
+#ifdef WITH_TERMIOS2
   usleep(2000);
   ioctl(fd_, TCFLSH, 0);
+#else
+  tcflush (fd_, TCIFLUSH);
+#endif
 }
 
 void
@@ -679,9 +882,12 @@ Serial::SerialImpl::flushOutput ()
   if (is_open_ == false) {
     throw PortNotOpenedException ("Serial::flushOutput");
   }
-  //tcflush (fd_, TCOFLUSH);
+#ifdef WITH_TERMIOS2
   usleep(2000);
   ioctl(fd_, TCFLSH, 1);
+#else
+  tcflush (fd_, TCOFLUSH);
+#endif
 }
 
 void
@@ -690,8 +896,11 @@ Serial::SerialImpl::sendBreak (int duration)
   if (is_open_ == false) {
     throw PortNotOpenedException ("Serial::sendBreak");
   }
-  //tcsendbreak (fd_, static_cast<int> (duration / 4));
+#ifdef WITH_TERMIOS2
   ioctl(fd_, TCSBRKP, static_cast<int> (duration / 4));
+#else
+  tcsendbreak (fd_, static_cast<int> (duration / 4));
+#endif
 }
 
 void
@@ -900,8 +1109,10 @@ Serial::SerialImpl::getCD ()
 void
 Serial::SerialImpl::discard()
 {
+#ifdef WITH_TERMIOS2
     usleep(2000);
     ioctl(fd_, TCFLSH, 2);
+#endif
 }
 
 void
